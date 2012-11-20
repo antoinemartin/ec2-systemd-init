@@ -1,0 +1,14 @@
+[Unit]
+Description=EC2 Bootstraping
+ConditionFileIsExecutable=/etc/ec2
+Before=sshd.service
+
+[Service]
+Type=oneshot
+ExecStart=/etc/ec2 start
+ExecStop=/etc/ec2 stop
+TimeoutSec=0
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

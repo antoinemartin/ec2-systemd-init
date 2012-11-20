@@ -1,0 +1,84 @@
+#!/bin/bash
+
+URL="http://169.254.169.254/latest/"
+NEWUSER="arch"
+CURL="curl --retry 3  -f -s"
+
+
+function set_hostname() {
+  HOSTNAME=$($CURL "${URL}meta-data/local-hostname")
+  SHORT_HOSTNAME="${HOSTNAME%.*.*.internal}"
+  hostnamectl set-hostname "$SHORT_HOSTNAME"
+  if ! grep -q ".internal" /etc/hosts ; then
+    cp /etc/hosts /etc/hosts.orig
+    IPV4=$($CURL "${URL}meta-data/local-ipv4")    
+    if [[ -n "$HOSTNAME" && -n "$IPV4" && -n "${HOSTNAME%.*.internal}" ]]; then
+      echo "$IPV4 $HOSTNAME ${HOSTNAME%.*.internal} $(hostname)" >> /etc/hosts
+    fi
+    echo "domain ${HOSTNAME#$(hostname).}" >> /etc/resolv.conf
+  fi
+}
+
+function set_ssh_key() {
+    local path=$1
+    if [ ! -f $path/.ssh/authorized_keys ] ; then
+       mkdir -p $path/.ssh
+       $CURL -o $path/.ssh/authorized_keys "${URL}meta-data/public-keys/0/openssh-key"
+    fi
+}
+
+function create_arch_user() {
+  if useradd -m -g adm -s /bin/bash -p x -G wheel,log $NEWUSER 2>/dev/null; then
+    cp -r /root/.bashrc /home/$NEWUSER
+    chown -R ${NEWUSER}:adm /home/${NEWUSER}/.
+    set_ssh_key /home/$NEWUSER
+  fi
+}
+
+function randomize_root_password {
+  local pw=$(dd if=/dev/urandom count=50 2>/dev/null | md5sum | cut -d ' ' -f 1)
+  cat <<EOF | passwd --quiet root >/dev/null 2>/dev/null
+$pw
+$pw
+EOF
+}
+
+function firstboot_setup() {
+    if [ -f /root/firstboot ]; then
+       if $CURL -o /root/user-data "${URL}user-data"; then
+         /bin/bash /root/user-data
+         rm -f /root/user-data
+       fi
+       rm -f /root/firstboot
+    fi
+}
+
+
+function main() {
+  local command="$1"
+
+  case "$command" in
+    start)
+      chmod 1777 /tmp
+      set_hostname
+      set_ssh_key /root
+      create_arch_user
+      randomize_root_password
+      firstboot_setup
+      ;;
+    stop)
+      sed -i "/domain/d" /etc/resolv.conf
+      sed -i "/$(hostname)/d" /etc/hosts
+      ;;
+    restart)
+      $0 stop
+      sleep 1
+      $0 start
+      ;;
+    *)
+      echo "usage: $0 {start|stop|restart}"
+  esac
+}
+
+main $1
+exit 0
